@@ -1,5 +1,6 @@
 ## Functions storage
 library(randtoolbox)
+library(INLA)
 
 ### Korobov Lattice
 shift.koro = function(n.pts, dimension, gen_constant, shift){
