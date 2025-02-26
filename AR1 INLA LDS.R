@@ -1,0 +1,135 @@
+##### Autoregressive Model of Order 1 Using LDS
+
+### Libraries
+library(INLA)
+library(randtoolbox)
+
+### AR(1) Model
+
+n = 100
+s = 0.1
+set.seed(781984); x = arima.sim(n, model = list(ar = 0.65))
+x = scale(x)
+y = x + rnorm(n, sd = s)
+data = data.frame(y, x, idx = 1:n)
+r = inla(y ~ -1 + f(idx, model="ar1",
+                    ## this is 0.65 in the internal scale
+                    hyper = list(rho = list(initial = 1.550597, fixed=FALSE,
+                                            prior = "betacorrelation",
+                                            param = c(5, 1)),
+                                 prec = list(prior = "loggamma",
+                                             param = c(1, 1)))), 
+         data = data,
+         family = "gaussian",
+         control.family = list(hyper = list(
+           prec = list(
+             fixed = FALSE,
+             initial = log(1/s^2),
+             prior = "loggamma",
+             param = c(100, 1)))), 
+         control.inla = list(int.strategy = "grid", reordering = "metis"))
+
+### Generate summary for number of hyperparameters
+summary(r) 
+
+### Extract the grid points from model and store them in "grid.points"
+grid.points = r$joint.hyper
+
+### Dimension of the grid.points object. Note that the first three columns
+### are the actual grid points - the rest is weightings
+dim(grid.points)
+
+### Plot grid points
+x11()
+pairs(grid.points[,c(1:3)])
+
+### Now I need to get the minimum and maximum values from each column of 
+### grid points. This will give us the co-ordinates for the support of LDS points
+
+a.min1 = min(grid.points[,1])
+a.min2 = min(grid.points[,2])
+a.min3 = min(grid.points[,3])
+b.max1 = max(grid.points[,1])
+b.max2 = max(grid.points[,2])
+b.max3 = max(grid.points[,3])
+
+low = c(a.min1, a.min2, a.min3)
+high = c(b.max1, b.max2, b.max3)
+
+### Generate whatever LDS point set (n points, s dimensions)
+### Note - dimensions = number of hyperparameters
+
+halt = halton(64, 3)
+
+### Transform LDS from (0,1)^s to (a,b)^s
+### Use trans.pset function below. ALso, assign hp names (in correct order) to each column
+
+trans.pset = function(points, low, high){
+  ## Transform from unit hypercube to hyper-cuboid
+  
+  vec = vector(length=length(low))
+  for (i in 1:length(vec)){
+    vec[i] = high[i]-low[i]
+  }
+  t.pset = array(dim = dim(points))
+  for(j in 1:nrow(points)){
+    for(i in 1:ncol(points)){
+      t.pset[j,i] = vec[i]*points[j,i] + low[i]
+    }}
+  return(t.pset)
+}
+
+trans.halt = trans.pset(halt, low, high)
+colnames(trans.halt)= c(names(r$joint.hyper[c(1:3)]))
+
+pairs(trans.halt, pch=16)
+
+
+### The trans.halt pointset are the new "design points" we put into INLA.
+### In this trans matrix, we also need integration weights - set this to 1 for each point
+
+design.halt = cbind(trans.halt, 1)
+
+
+### Now lets run INLA
+r2 = inla(y ~ -1 + f(idx, model="ar1",
+                     ## this is 0.65 in the internal scale
+                     hyper = list(rho = list(initial = 1.550597, fixed=FALSE,
+                                             prior = "betacorrelation",
+                                             param = c(5, 1)),
+                                  prec = list(prior = "loggamma",
+                                              param = c(1, 1)))), 
+          data = data,
+          family = "gaussian",
+          control.family = list(hyper = list(
+            prec = list(
+              fixed = FALSE,
+              initial = log(1/s^2),
+              prior = "loggamma",
+              param = c(100, 1)))), 
+          control.inla = list(int.strategy = "user", int.design = design.halt, 
+                              reordering = "metis"))
+
+### Summary stats - any differences?
+
+summary(r)
+summary(r2)
+
+pairs(r2$joint.hyper[,c(1:2)], pch=16)
+
+### Summary stats - any differences?
+
+summary(RR.inlaHalt)
+summary(RR.inlaGrid)
+
+
+
+
+
+
+
+
+
+
+
+

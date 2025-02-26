@@ -1,0 +1,621 @@
+### ZAMBIA Cubic Correction
+### FIVE Hyperparameters example
+
+library(INLA)    #For inla-related functions
+
+### Functions Needed
+
+### Korobov Lattice
+shift.koro = function(n.pts, dimension, gen_constant, shift){
+    n = n.pts; s = dimension; a = gen_constant; v = runif(s,0,1)
+    z.korob = vector(length = s)
+    z.korob[1] = 1
+    for (j in 1:(s-1)){
+        z.korob[j+1] = (z.korob[j] * a) %% n
+    }
+    korob = array(dim = c(n,s))
+    if(shift == TRUE){
+        for (k in 0:(n-1)){
+            korob[k+1,] = (((k/n)*z.korob) + v) %% 1
+        }
+    } else {
+        for (k in 0:(n-1)){
+            korob[k+1,] = ((k/n)*z.korob) %% 1
+        }
+    }
+    return(korob)
+}
+
+### Transform pointset to square integration region
+trans.pset = function(points, low, high){
+    vec = vector(length=length(low))
+    for (i in 1:length(vec)){
+        vec[i] = high[i]-low[i]
+    }
+    t.pset = array(dim = dim(points))
+    for(j in 1:nrow(points)){
+        for(i in 1:ncol(points)){
+            t.pset[j,i] = vec[i]*points[j,i] + low[i]
+        }}
+    return(t.pset)
+}
+
+### Kullback-Liebler divergence - for comparisons of distributions
+kl.div = function(true.dist,approx.dist)
+{	if(length(true.dist) != length(approx.dist))
+	{message("Try again mate!")}
+	else{
+	n = length(true.dist)
+	try = cbind(true.dist,approx.dist)
+	h = apply(try,2,sum)
+	try.again = cbind(try[,1]/h[1], try[,2]/h[2])	#Normalising
+	kld = vector(length=n)
+	for(i in 1:n)
+	{
+		kld[i] = log(try.again[i,1]/try.again[i,2])*try.again[i,1]
+	}
+	return(sum(kld))
+}} 
+
+### Partitioning functions
+meanBetween = function(vec){
+	meanVec = vector(length = length(vec) - 1)
+	for(i in 1:length(meanVec)){
+		meanVec[i] = 0.5*(vec[i] + vec[i+1])
+		}
+	return(meanVec)
+	}
+
+partition = function(mat, support, nPart, position){
+	parts = seq(support[1], support[2], length.out = nPart+1)
+	m.vec = vector(length = nPart)
+	m.pos = vector(length = nPart) 
+	for(i in 1:nPart-1){		###FINDING AVERAGES
+		m.vec[i] = mean(subset(mat[,2], mat[,1] >= parts[i] & mat[,1] < parts[i+1]))
+		}
+	m.vec[nPart] = mean(subset(mat[,2], mat[,1] >= parts[nPart] & mat[,1] <= parts[nPart+1]))
+						###POSITIONING
+	if(position == 0){
+		m.pos = parts[1:nPart]
+	} else if(position == 1){
+		m.pos = parts[2:(nPart+1)]
+	} else{
+		m.pos = meanBetween(parts)
+		}
+	return(cbind(m.pos, m.vec))
+	}
+
+### Vandermonde Matrix
+vandermonde.matrix = function(x.pts, degree){
+	x = x.pts; y = 0:degree
+	v = outer(x,y,"^")
+	return(v)
+	}
+
+### For function evaluations using INLA
+inla.evaluate = function(theta, result){
+    ## re-evaluate the model at fixed configuration 'theta'. return the new result.
+    result$.args$control.mode = list(theta = theta, x = result$mode$x, fixed = TRUE)
+    return (do.call("inla", args = result$.args))
+}
+
+####################################
+### Setup - FIVE hyperparameters ###
+####################################
+
+data(Zambia)
+
+## Load map for spatial correlations
+g = system.file("demodata/zambia.graph", package="INLA")
+
+# Add one column for the unstructured spatial effect
+Zambia$distr.unstruct  =  Zambia$district
+
+formula = hazstd ~ rcw + edu1 + edu2+  tpr + sex +
+				f(inla.group(bmi),model="rw2",
+					hyper = list(prec = list(
+								fixed = FALSE,
+								prior = "loggamma",
+								param = c(1,0.00005)))) + 
+				f(agc,model="rw2",
+					hyper = list(prec = list(
+								fixed = FALSE,
+								prior = "loggamma",
+								param = c(1,0.00005)))) + 
+                        f(district,model="besag",graph=g, 	
+					hyper = list(prec = list(
+								fixed = FALSE,
+								prior = "loggamma",
+								param = c(1,0.01)))) +
+                        f(distr.unstruct,model="iid",	
+					hyper = list(prec = list(
+								fixed = FALSE,
+								prior = "loggamma",
+								param = c(1,0.01)))) 
+						
+### INLA call
+r  =  inla(formula,data=Zambia, control.fixed = list(prec.intercept = 0.001, prec = 0.001),
+		num.threads = 2)
+
+### Fine grid approximation - takes around half an hour
+r2 = inla.hyperpar(r, diff.logdens = 5)
+
+### Support Bounds
+## Use INLA to do this
+limit = 0.0001
+
+theta.inla.hyperpar1.list = inla.smarginal(r2$internal.marginals.hyperpar[[1]])
+theta.inla.hyperpar1.mat = cbind(theta.inla.hyperpar1.list$x, theta.inla.hyperpar1.list$y)
+theta.inla.hyperpar1 = subset(theta.inla.hyperpar1.mat, theta.inla.hyperpar1.mat[,2] >= limit)
+inla_hyperpar1 = r2$marginals.hyperpar[[1]]
+
+theta.inla.hyperpar2.list = inla.smarginal(r2$internal.marginals.hyperpar[[2]])
+theta.inla.hyperpar2.mat = cbind(theta.inla.hyperpar2.list$x, theta.inla.hyperpar2.list$y)
+theta.inla.hyperpar2 = subset(theta.inla.hyperpar2.mat, theta.inla.hyperpar2.mat[,2] >= limit)
+inla_hyperpar2 = r2$marginals.hyperpar[[2]]
+
+theta.inla.hyperpar3.list = inla.smarginal(r2$internal.marginals.hyperpar[[3]])
+theta.inla.hyperpar3.mat = cbind(theta.inla.hyperpar3.list$x, theta.inla.hyperpar3.list$y)
+theta.inla.hyperpar3 = subset(theta.inla.hyperpar3.mat, theta.inla.hyperpar3.mat[,2] >= limit)
+inla_hyperpar3 = r2$marginals.hyperpar[[3]]
+
+theta.inla.hyperpar4.list = inla.smarginal(r2$internal.marginals.hyperpar[[4]])
+theta.inla.hyperpar4.mat = cbind(theta.inla.hyperpar4.list$x, theta.inla.hyperpar4.list$y)
+theta.inla.hyperpar4 = subset(theta.inla.hyperpar4.mat, theta.inla.hyperpar4.mat[,2] >= limit)
+inla_hyperpar4 = r2$marginals.hyperpar[[4]]
+
+theta.inla.hyperpar5.list = inla.smarginal(r2$internal.marginals.hyperpar[[5]])
+theta.inla.hyperpar5.mat = cbind(theta.inla.hyperpar5.list$x, theta.inla.hyperpar5.list$y)
+theta.inla.hyperpar5 = subset(theta.inla.hyperpar5.mat, theta.inla.hyperpar5.mat[,2] >= limit)
+inla_hyperpar5 = r2$marginals.hyperpar[[5]]
+#############################################
+
+### Model details
+theta.names = names(r$marginals.hyperpar)
+len.theta = length(theta.names)
+est.theta = r$mode$theta   # Mode value(s) estimate (from inla function)
+cov.intern = r$misc$cov.intern # Covariance matrix estimate from inla.
+
+cat("We have ", len.theta, "hyperparmaeters\n")
+for(nm in theta.names) {
+    cat("\t- ", nm, "\n")
+}
+
+cat("Estimates are ")
+cat(est.theta, "\n")
+cat("With Covariance matrix\n")
+print(cov.intern)
+
+
+## compute the reference (without the priors on the hyperparameters)
+mlik.estimator = 2
+mlik.ref = inla.evaluate(r$mode$theta, r)$mlik[mlik.estimator] + 
+            (dgamma(exp(r$mode$theta[1]), shape = 1, rate = 0.00005, log=TRUE) + r$mode$theta[1]) +
+	   	   (dgamma(exp(r$mode$theta[2]), shape = 1, rate = 0.00005, log=TRUE) + r$mode$theta[2]) +
+			(dgamma(exp(r$mode$theta[3]), shape = 1, rate = 0.00005, log=TRUE) + r$mode$theta[3]) +
+				(dgamma(exp(r$mode$theta[4]), shape = 1, rate = 0.01, log=TRUE) + r$mode$theta[4]) +
+					(dgamma(exp(r$mode$theta[5]), shape = 1, rate = 0.01, log=TRUE) + r$mode$theta[5]) 
+
+### Set up Korobov lattice - points to evaluate joint posterior
+npoints = 512
+
+## Generating constant is 19 (from Lattice Builder - extensible KL)
+korobov.non = shift.koro(npoints, len.theta, 19, FALSE)
+
+#Low and High based on INLA "where the bulk lies" limits
+low = c(min(theta.inla.hyperpar1[,1]), min(theta.inla.hyperpar2[,1]), 
+		min(theta.inla.hyperpar3[,1]), min(theta.inla.hyperpar4[,1]), min(theta.inla.hyperpar5[,1]))
+
+high = c(max(theta.inla.hyperpar1[,1]), max(theta.inla.hyperpar2[,1]), 
+		max(theta.inla.hyperpar3[,1]), max(theta.inla.hyperpar4[,1]), max(theta.inla.hyperpar5[,1]))
+
+### Transform pointset to integration region
+
+korobov = trans.pset(korobov.non, low, high)
+
+npoints = nrow(korobov)
+
+res1 = matrix(NA, npoints, len.theta+1)
+
+for(i in 1:npoints) {
+
+	theta.new = korobov[i,]
+    
+## compute the relative posterior based on the Laplace approximation. 
+## Since we are rerunning with fixed=TRUE (above), the priors for the hyperparameters are 
+## not included, so we need to add those, + Jacobian.
+
+    r.new = inla.evaluate(theta.new, r)
+    lpost.rel = r.new$mlik[mlik.estimator] - mlik.ref +
+       (dgamma(exp(theta.new[1]), shape = 1, rate = 0.00005, log=TRUE) + theta.new[1]) +
+	   	   (dgamma(exp(theta.new[2]), shape = 1, rate = 0.00005, log=TRUE) + theta.new[2]) +
+			(dgamma(exp(theta.new[3]), shape = 1, rate = 0.00005, log=TRUE) + theta.new[3]) +
+				(dgamma(exp(theta.new[4]), shape = 1, rate = 0.01, log=TRUE) + theta.new[4]) +
+					(dgamma(exp(theta.new[5]), shape = 1, rate = 0.01, log=TRUE) + theta.new[5]) 
+
+## lpost.rel are the function evaluations (log) for the posterior 
+## adding the log hyperpriors and subtracting the log marginal likelihood ## computed before.
+
+    cat(i, "Evaluate theta.new", theta.new, "with relative posterior",
+        lpost.rel, "\n")
+    res1[i, ] = c(theta.new, lpost.rel)
+}
+
+
+#########################################
+### Initial Approximation (Quadratic) ###
+#########################################
+### Number of partitions, partition position and degree (2)
+parts = 15
+position = 2
+poly.degree = 2
+
+### Finding marginals when function evaluations are in log-scale...
+psi1 = res1[,c(1,len.theta+1)]
+psi1 = psi1[order(psi1[,1]),]
+psi2 = res1[,c(2,len.theta+1)]
+psi2 = psi2[order(psi2[,1]),]
+psi3 = res1[,c(3,len.theta+1)]
+psi3 = psi3[order(psi3[,1]),]
+psi4 = res1[,c(4,len.theta+1)]
+psi4 = psi4[order(psi4[,1]),]
+psi5 = res1[,c(5,len.theta+1)]
+psi5 = psi5[order(psi5[,1]),]
+
+### Partition and find pointwise means
+psi1.parts.exp = partition(cbind(psi1[,1], exp(psi1[,2])), c(low[1], high[1]), parts, position)
+psi2.parts.exp = partition(cbind(psi2[,1], exp(psi2[,2])), c(low[2], high[2]), parts, position)
+psi3.parts.exp = partition(cbind(psi3[,1], exp(psi3[,2])), c(low[3], high[3]), parts, position)
+psi4.parts.exp = partition(cbind(psi4[,1], exp(psi4[,2])), c(low[4], high[4]), parts, position)
+psi5.parts.exp = partition(cbind(psi5[,1], exp(psi5[,2])), c(low[5], high[5]), parts, position)
+
+### Co-ordinates for pointwise means
+psi1.parts = cbind(psi1.parts.exp[,1], log(psi1.parts.exp[,2]))
+psi2.parts = cbind(psi2.parts.exp[,1], log(psi2.parts.exp[,2]))
+psi3.parts = cbind(psi3.parts.exp[,1], log(psi3.parts.exp[,2]))
+psi4.parts = cbind(psi4.parts.exp[,1], log(psi4.parts.exp[,2]))
+psi5.parts = cbind(psi5.parts.exp[,1], log(psi5.parts.exp[,2]))
+
+## Data matrix
+van.partM1 = vandermonde.matrix(psi1.parts[,1], poly.degree)
+van.partM2 = vandermonde.matrix(psi2.parts[,1], poly.degree)
+van.partM3 = vandermonde.matrix(psi3.parts[,1], poly.degree)
+van.partM4 = vandermonde.matrix(psi4.parts[,1], poly.degree)
+van.partM5 = vandermonde.matrix(psi5.parts[,1], poly.degree)
+
+
+## X'X - Gramian
+gramian.part1 = t(van.partM1)%*%van.partM1
+gramian.part2 = t(van.partM2)%*%van.partM2
+gramian.part3 = t(van.partM3)%*%van.partM3
+gramian.part4 = t(van.partM4)%*%van.partM4
+gramian.part5 = t(van.partM5)%*%van.partM5
+
+## Least squares approximation to quadratic coefficients
+marg1.beta.part = qr.solve(gramian.part1, tol = 1e-32)%*%t(van.partM1)%*%psi1.parts[,2]
+marg2.beta.part = qr.solve(gramian.part2, tol = 1e-32)%*%t(van.partM2)%*%psi2.parts[,2]
+marg3.beta.part = qr.solve(gramian.part3, tol = 1e-32)%*%t(van.partM3)%*%psi3.parts[,2]
+marg4.beta.part = qr.solve(gramian.part4, tol = 1e-32)%*%t(van.partM4)%*%psi4.parts[,2]
+marg5.beta.part = qr.solve(gramian.part5, tol = 1e-32)%*%t(van.partM5)%*%psi5.parts[,2]
+
+## Create a new set of values over the range for polynomial
+l.o = 1000
+pt.part1 = seq(low[1], high[1], length.out = l.o)
+pt.part2 = seq(low[2], high[2], length.out = l.o)
+pt.part3 = seq(low[3], high[3], length.out = l.o)
+pt.part4 = seq(low[4], high[4], length.out = l.o)
+pt.part5 = seq(low[5], high[5], length.out = l.o)
+
+## This is the quadratic approximation to the log(true) marginal
+marg1.part.pred = vandermonde.matrix(pt.part1, poly.degree)%*%marg1.beta.part
+marg2.part.pred = vandermonde.matrix(pt.part2, poly.degree)%*%marg2.beta.part
+marg3.part.pred = vandermonde.matrix(pt.part3, poly.degree)%*%marg3.beta.part
+marg4.part.pred = vandermonde.matrix(pt.part4, poly.degree)%*%marg4.beta.part
+marg5.part.pred = vandermonde.matrix(pt.part5, poly.degree)%*%marg5.beta.part
+
+theta.poly.part1 = cbind(pt.part1, marg1.part.pred)
+theta.poly.part1 = theta.poly.part1[order(theta.poly.part1[,1]),]
+theta.poly.part2 = cbind(pt.part2, marg2.part.pred)
+theta.poly.part2 = theta.poly.part2[order(theta.poly.part2[,1]),]
+theta.poly.part3 = cbind(pt.part3, marg3.part.pred)
+theta.poly.part3 = theta.poly.part3[order(theta.poly.part3[,1]),]
+theta.poly.part4 = cbind(pt.part4, marg4.part.pred)
+theta.poly.part4 = theta.poly.part4[order(theta.poly.part4[,1]),]
+theta.poly.part5 = cbind(pt.part5, marg5.part.pred)
+theta.poly.part5 = theta.poly.part5[order(theta.poly.part5[,1]),]
+
+## Partition lines for graphs
+lines.part1 = seq(low[1], high[1], length.out = parts + 1)
+lines.part2 = seq(low[2], high[2], length.out = parts + 1)
+lines.part3 = seq(low[3], high[3], length.out = parts + 1)
+lines.part4 = seq(low[4], high[4], length.out = parts + 1)
+lines.part5 = seq(low[5], high[5], length.out = parts + 1)
+
+### Plots for function evaluations, partitions, pointwise means and quadratic approximation
+x11(30,20); par(mfrow=c(2,3))
+plot(psi1, pch=16, main = "function evals", col="light blue")
+points(psi1.parts, pch=16, col="red")
+lines(theta.poly.part1, col="black", lwd=1.5)
+abline(v = lines.part1, col = "green")
+
+plot(psi2, pch=16, main = "function evals", col="light blue")
+points(psi2.parts, pch=16, col="red")
+lines(theta.poly.part2, col="black", lwd=1.5)
+abline(v = lines.part2, col = "green")
+
+plot(psi3, pch=16, main = "function evals", col="light blue")
+points(psi3.parts, pch=16, col="red")
+lines(theta.poly.part3, col="black", lwd=1.5)
+abline(v = lines.part3, col = "green")
+
+plot(psi4, pch=16, main = "function evals", col="light blue")
+points(psi4.parts, pch=16, col="red")
+lines(theta.poly.part4, col="black", lwd=1.5)
+abline(v = lines.part4, col = "green")
+
+plot(psi5, pch=16, main = "function evals", col="light blue")
+points(psi5.parts, pch=16, col="red")
+lines(theta.poly.part5, col="black", lwd=1.5)
+abline(v = lines.part5, col = "green")
+
+### Plots above, without function evaluations - Can see difference between polynomial and pointwise means
+### For next step - treat these as "errors/residuals", to help fit a correction..
+x11(30,20); par(mfrow=c(2,3))
+plot(psi1.parts, pch=16, col="red")
+lines(theta.poly.part1, col="black", lwd=1.5)
+abline(v = lines.part1, col = "green")
+
+plot(psi2.parts, pch=16, col="red")
+lines(theta.poly.part2, col="black", lwd=1.5)
+abline(v = lines.part2, col = "green")
+
+plot(psi3.parts, pch=16, col="red")
+lines(theta.poly.part3, col="black", lwd=1.5)
+abline(v = lines.part3, col = "green")
+
+plot(psi4.parts, pch=16, col="red")
+lines(theta.poly.part4, col="black", lwd=1.5)
+abline(v = lines.part4, col = "green")
+
+plot(psi5.parts, pch=16, col="red")
+lines(theta.poly.part5, col="black", lwd=1.5)
+abline(v = lines.part5, col = "green")
+
+### Proper theta approximations 
+theta.lds.part1 = cbind(pt.part1, exp(marg1.part.pred))
+theta.ppn.const1 = diff(range(theta.lds.part1[,1]))*mean(theta.lds.part1[,2])
+theta.lds.part1 = cbind(theta.lds.part1[,1], theta.lds.part1[,2]/theta.ppn.const1)
+
+theta.lds.part2 = cbind(pt.part2, exp(marg2.part.pred))
+theta.ppn.const2 = diff(range(theta.lds.part2[,1]))*mean(theta.lds.part2[,2])
+theta.lds.part2 = cbind(theta.lds.part2[,1], theta.lds.part2[,2]/theta.ppn.const2)
+
+theta.lds.part3 = cbind(pt.part3, exp(marg3.part.pred))
+theta.ppn.const3 = diff(range(theta.lds.part3[,1]))*mean(theta.lds.part3[,2])
+theta.lds.part3 = cbind(theta.lds.part3[,1], theta.lds.part3[,2]/theta.ppn.const3)
+
+theta.lds.part4 = cbind(pt.part4, exp(marg4.part.pred))
+theta.ppn.const4 = diff(range(theta.lds.part4[,1]))*mean(theta.lds.part4[,2])
+theta.lds.part4 = cbind(theta.lds.part4[,1], theta.lds.part4[,2]/theta.ppn.const4)
+
+theta.lds.part5 = cbind(pt.part5, exp(marg5.part.pred))
+theta.ppn.const5 = diff(range(theta.lds.part5[,1]))*mean(theta.lds.part5[,2])
+theta.lds.part5 = cbind(theta.lds.part5[,1], theta.lds.part5[,2]/theta.ppn.const5)
+
+
+### Approximations - Our quadratic pproximation vs INLA's Dense Grid
+x11(30,20); par(mfrow = c(2,3))
+plot(theta.inla.hyperpar1, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "theta_1")
+lines(theta.lds.part1, type="l", col = "red", lwd = 2)
+
+plot(theta.inla.hyperpar2, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "theta_2")
+lines(theta.lds.part2, type="l", col = "red", lwd = 2)
+
+plot(theta.inla.hyperpar3, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "theta_3")
+lines(theta.lds.part3, type="l", col = "red", lwd = 2)
+
+plot(theta.inla.hyperpar4, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "theta_4")
+lines(theta.lds.part4, type="l", col = "red", lwd = 2)
+
+plot(theta.inla.hyperpar5, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "theta_5")
+lines(theta.lds.part5, type="l", col = "red", lwd = 2)
+
+
+########################
+### Cubic Correction ###
+########################
+
+### Polynomial fit at abscissa points
+quad.poly1 = van.partM1%*%marg1.beta.part
+quad.poly2 = van.partM2%*%marg2.beta.part
+quad.poly3 = van.partM3%*%marg3.beta.part
+quad.poly4 = van.partM4%*%marg4.beta.part
+quad.poly5 = van.partM5%*%marg5.beta.part
+
+### residuals = poly - pointwise means
+resids1 = quad.poly1 - psi1.parts[,2]
+resids2 = quad.poly2 - psi2.parts[,2]
+resids3 = quad.poly3 - psi3.parts[,2]
+resids4 = quad.poly4 - psi4.parts[,2]
+resids5 = quad.poly5 - psi5.parts[,2]
+
+ppdeg = 3
+
+### get cubic coefficients using least squares through residuals
+### Vandermonde matrix here is cubic..
+vR1 = vandermonde.matrix(psi1.parts[,1], ppdeg)
+vR2 = vandermonde.matrix(psi2.parts[,1], ppdeg)
+vR3 = vandermonde.matrix(psi3.parts[,1], ppdeg)
+vR4 = vandermonde.matrix(psi4.parts[,1], ppdeg)
+vR5 = vandermonde.matrix(psi5.parts[,1], ppdeg)
+
+another.beta1 = qr.solve(t(vR1)%*%vR1, tol = 1e-32)%*%t(vR1)%*%resids1
+another.beta2 = qr.solve(t(vR2)%*%vR2, tol = 1e-32)%*%t(vR2)%*%resids2
+another.beta3 = qr.solve(t(vR3)%*%vR3, tol = 1e-32)%*%t(vR3)%*%resids3
+another.beta4 = qr.solve(t(vR2)%*%vR4, tol = 1e-32)%*%t(vR4)%*%resids4
+another.beta5 = qr.solve(t(vR3)%*%vR5, tol = 1e-32)%*%t(vR5)%*%resids5
+
+corrected.beta1 = rbind(marg1.beta.part,0) - another.beta1
+corrected.beta2 = rbind(marg2.beta.part,0) - another.beta2
+corrected.beta3 = rbind(marg3.beta.part,0) - another.beta3
+corrected.beta4 = rbind(marg4.beta.part,0) - another.beta4
+corrected.beta5 = rbind(marg5.beta.part,0) - another.beta5
+
+## Cubic correction
+marg1.corr.pred = vandermonde.matrix(pt.part1, ppdeg)%*%corrected.beta1
+marg2.corr.pred = vandermonde.matrix(pt.part2, ppdeg)%*%corrected.beta2
+marg3.corr.pred = vandermonde.matrix(pt.part3, ppdeg)%*%corrected.beta3
+marg4.corr.pred = vandermonde.matrix(pt.part4, ppdeg)%*%corrected.beta4
+marg5.corr.pred = vandermonde.matrix(pt.part5, ppdeg)%*%corrected.beta5
+
+l.o = 1000
+
+pt.part1 = seq(low[1], high[1], length.out = l.o)
+pt.part2 = seq(low[2], high[2], length.out = l.o)
+pt.part3 = seq(low[3], high[3], length.out = l.o)
+pt.part4 = seq(low[4], high[4], length.out = l.o)
+pt.part5 = seq(low[5], high[5], length.out = l.o)
+
+theta.poly.corr1 = cbind(pt.part1, marg1.corr.pred)
+theta.poly.corr1 = theta.poly.corr1[order(theta.poly.corr1[,1]),]
+theta.poly.corr2 = cbind(pt.part2, marg2.corr.pred)
+theta.poly.corr2 = theta.poly.corr2[order(theta.poly.corr2[,1]),]
+theta.poly.corr3 = cbind(pt.part3, marg3.corr.pred)
+theta.poly.corr3 = theta.poly.corr3[order(theta.poly.corr3[,1]),]
+theta.poly.corr4 = cbind(pt.part4, marg4.corr.pred)
+theta.poly.corr4 = theta.poly.corr4[order(theta.poly.corr4[,1]),]
+theta.poly.corr5 = cbind(pt.part5, marg5.corr.pred)
+theta.poly.corr5 = theta.poly.corr5[order(theta.poly.corr5[,1]),]
+
+lines.part1 = seq(low[1], high[1], length.out = parts + 1)
+lines.part2 = seq(low[2], high[2], length.out = parts + 1)
+lines.part3 = seq(low[3], high[3], length.out = parts + 1)
+lines.part4 = seq(low[4], high[4], length.out = parts + 1)
+lines.part5 = seq(low[5], high[5], length.out = parts + 1)
+
+### Plots of function evals, partitions, pointwise means and cubic correction
+x11(30,20); par(mfrow=c(2,3))
+plot(psi1, pch=16, main = "function evals", col="light blue")
+points(psi1.parts, pch=16, col="red")
+lines(theta.poly.corr1, col="black", lwd=1.5)
+
+plot(psi2, pch=16, main = "function evals", col="light blue")
+points(psi2.parts, pch=16, col="red")
+lines(theta.poly.corr2, col="black", lwd=1.5)
+
+plot(psi3, pch=16, main = "function evals", col="light blue")
+points(psi3.parts, pch=16, col="red")
+lines(theta.poly.corr3, col="black", lwd=1.5)
+
+plot(psi4, pch=16, main = "function evals", col="light blue")
+points(psi4.parts, pch=16, col="red")
+lines(theta.poly.corr4, col="black", lwd=1.5)
+
+plot(psi5, pch=16, main = "function evals", col="light blue")
+points(psi5.parts, pch=16, col="red")
+lines(theta.poly.corr5, col="black", lwd=1.5)
+
+
+### Cubic correction vs Initial (quadratic) approximation
+x11(40,20); par(mfrow=c(2,3))
+plot(psi1.parts, pch=16, col="red", cex = 1.5, xlab="", ylab="", main = "Theta 1", cex.main=2)
+lines(theta.poly.part1, col="black", lwd=2)
+lines(theta.poly.corr1, col='blue', lty=2, lwd=2)
+legend("topleft",
+	c("Initial", "Cubic-Cor"), col = c("black","blue"), lwd=c(2,2), lty=c(1,2), cex=1.5)
+
+plot(psi2.parts, pch=16, col="red", cex = 1.5, xlab="", ylab="", main = "Theta 2", cex.main=2)
+lines(theta.poly.part2, col="black", lwd=2)
+lines(theta.poly.corr2, col='blue', lty=2, lwd=2)
+legend("topleft",
+	c("Initial", "Cubic-Cor"), col = c("black","blue"), lwd=c(2,2), lty=c(1,2), cex=1.5)
+
+plot(psi3.parts, pch=16, col="red", cex = 1.5, xlab="", ylab="", main = "Theta 3", cex.main=2)
+lines(theta.poly.part3, col="black", lwd=2)
+lines(theta.poly.corr3, col='blue', lty=2, lwd=2)
+legend("topleft",
+	c("Initial", "Cubic-Cor"), col = c("black","blue"), lwd=c(2,2), lty=c(1,2), cex=1.5)
+
+plot(psi4.parts, pch=16, col="red", cex = 1.5, xlab="", ylab="", main = "Theta 4", cex.main=2)
+lines(theta.poly.part4, col="black", lwd=2)
+lines(theta.poly.corr4, col='blue', lty=2, lwd=2)
+legend("topleft",
+	c("Initial", "Cubic-Cor"), col = c("black","blue"), lwd=c(2,2), lty=c(1,2), cex=1.5)
+
+plot(psi5.parts, pch=16, col="red", cex = 1.5, xlab="", ylab="", main = "Theta 5", cex.main=2)
+lines(theta.poly.part5, col="black", lwd=2)
+lines(theta.poly.corr5, col='blue', lty=2, lwd=2)
+legend("topleft",
+	c("Initial", "Cubic-Cor"), col = c("black","blue"), lwd=c(2,2), lty=c(1,2), cex=1.5)
+
+
+### Proper correction plots 
+theta.lds.corr1 = cbind(pt.part1, exp(marg1.corr.pred))
+theta.corr.const1 = diff(range(theta.lds.corr1[,1]))*mean(theta.lds.corr1[,2])
+theta.lds.corr1 = cbind(theta.lds.corr1[,1], theta.lds.corr1[,2]/theta.corr.const1)
+
+theta.lds.corr2 = cbind(pt.part2, exp(marg2.corr.pred))
+theta.corr.const2 = diff(range(theta.lds.corr2[,1]))*mean(theta.lds.corr2[,2])
+theta.lds.corr2 = cbind(theta.lds.corr2[,1], theta.lds.corr2[,2]/theta.corr.const2)
+
+theta.lds.corr3 = cbind(pt.part3, exp(marg3.corr.pred))
+theta.corr.const3 = diff(range(theta.lds.corr3[,1]))*mean(theta.lds.corr3[,2])
+theta.lds.corr3 = cbind(theta.lds.corr3[,1], theta.lds.corr3[,2]/theta.corr.const3)
+
+theta.lds.corr4 = cbind(pt.part4, exp(marg4.corr.pred))
+theta.corr.const4 = diff(range(theta.lds.corr4[,1]))*mean(theta.lds.corr4[,2])
+theta.lds.corr4 = cbind(theta.lds.corr4[,1], theta.lds.corr4[,2]/theta.corr.const4)
+
+
+theta.lds.corr5 = cbind(pt.part5, exp(marg5.corr.pred))
+theta.corr.const5 = diff(range(theta.lds.corr5[,1]))*mean(theta.lds.corr5[,2])
+theta.lds.corr5 = cbind(theta.lds.corr5[,1], theta.lds.corr5[,2]/theta.corr.const5)
+
+
+### Plots - Thetas and hyperpars
+## INLA dense grid vs Initial quadratic approx vs cubic correction
+x11(40,20); par(mfrow = c(2,3))
+plot(theta.inla.hyperpar1, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "", ylab="", main = "theta 1", cex.main = 2)
+lines(theta.lds.part1, type="l", col = "red", lwd = 2)
+lines(theta.lds.corr1, type="l", col = "blue", lty =2, lwd = 2)
+legend("topleft",
+		c("INLA-grid", "Initial", "C-Corr"), lty = c(1,1,2), lwd = c(2,2,2), 
+		col = c("black","red", "blue"), cex = 1.5)
+
+plot(theta.inla.hyperpar2, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "", ylab="", main = "Theta 2", cex.main = 2)
+lines(theta.lds.part2, type="l", col = "red", lwd = 2)
+lines(theta.lds.corr2, type="l", col = "blue", lty =2, lwd = 2)
+legend("topleft",
+		c("INLA-grid", "Initial", "C-Corr"), lty = c(1,1,2), lwd = c(2,2,2), 
+		col = c("black","red", "blue"), cex = 1.5)
+
+plot(theta.inla.hyperpar3, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "", ylab="", main = "Theta 3", cex.main = 2)
+lines(theta.lds.part3, type="l", col = "red", lwd = 2)
+lines(theta.lds.corr3, type="l", col = "blue", lty =2, lwd = 2)
+legend("topleft",
+		c("INLA-grid", "Initial", "C-Corr"), lty = c(1,1,2), lwd = c(2,2,2), 
+		col = c("black","red", "blue"), cex = 1.5)
+
+plot(theta.inla.hyperpar4, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "", ylab="", main = "Theta 4", cex.main = 2)
+lines(theta.lds.part4, type="l", col = "red", lwd = 2)
+lines(theta.lds.corr4, type="l", col = "blue", lty =2, lwd = 2)
+legend("topleft",
+		c("INLA-grid", "Initial", "C-Corr"), lty = c(1,1,2), lwd = c(2,2,2), 
+		col = c("black","red", "blue"), cex = 1.5)
+
+plot(theta.inla.hyperpar5, type="l", lwd = 2, cex.lab = 1.25,
+		xlab = "", ylab="", main = "Theta 5", cex.main = 2)
+lines(theta.lds.part5, type="l", col = "red", lwd = 2)
+lines(theta.lds.corr5, type="l", col = "blue", lty =2, lwd = 2)
+legend("topleft",
+		c("INLA-grid", "Initial", "C-Corr"), lty = c(1,1,2), lwd = c(2,2,2), 
+		col = c("black","red", "blue"), cex = 1.5)

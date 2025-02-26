@@ -1,0 +1,43 @@
+## SPDE Toy example to use in the applications of my thesis
+
+data("SPDEtoy")
+dim(SPDEtoy) # 200 values for 3 variables
+head(SPDEtoy)
+# values are randomly sampled from unit square denoted by points (0,0) and (1,1) with
+# coordinates given by s1 and s2
+
+# the model for simulating the data assumes y is distributed by Normal(eta_i, sigma^2_e) for i = 1,...,200
+# where sigma^2_e is the variance of the zero mean measurement error e_i
+# the response mean is defined as eta_i = b_0 + random effect
+
+
+### mesh triangulations 
+coords <- as.matrix(SPDEtoy[,1:2])
+
+# cutoff
+domain <- matrix(cbind(c(0,1,1,0.7,0),c(0,0,0.7,1,1)),ncol=2)
+mesh6 <- inla.mesh.2d(loc.domain=domain,max.edge=c(0.04,0.2),cutoff=0.05, offset=c(0.1,0.4))
+
+
+plot(mesh6, main="")
+points(coords, pch=21, bg=1, col="white", cex=1.8)
+
+# sparse weight matrix
+A.est6 <- inla.spde.make.A(mesh=mesh6, loc=coords)
+dim(A.est6)
+
+#### Model Fitting
+
+# Matern SPDE
+spde <- inla.spde2.matern(mesh=mesh6, alpha=2)
+
+# Linear predictor
+formula <- y ~ -1 + intercept + f(spatial.field, model=spde)
+# -1 removes the default intercept
+
+# model
+output6 <- inla(formula, data = list(y=SPDEtoy$y, intercept=rep(1, spde$n.spde),
+                                     spatial.field=1:spde$n.spde),
+                                     control.predictor=list(A=A.est6, compute=TRUE),
+                verbose=TRUE, debug=TRUE)
+

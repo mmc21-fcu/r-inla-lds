@@ -1,0 +1,143 @@
+##### Autoregressive Model for Zambia model (5 HPs) using LDS
+
+### Libraries
+library(INLA)
+library(randtoolbox)
+
+### Zambia model
+
+data(Zambia)
+
+#load map
+g = system.file("demodata/zambia.graph", package="INLA")
+
+# add one column for the unstructured spatial effect
+Zambia$distr.unstruct  =  Zambia$district
+
+formula = hazstd ~ rcw + edu1 + edu2+  tpr + sex +
+  f(inla.group(bmi),model="rw2",
+    hyper = list(prec = list(
+      fixed = FALSE,
+      prior = "loggamma",
+      param = c(1,0.00005)))) + 
+  f(agc,model="rw2",
+    hyper = list(prec = list(
+      fixed = FALSE,
+      prior = "loggamma",
+      param = c(1,0.00005)))) + 
+  f(district,model="besag",graph=g, 	
+    hyper = list(prec = list(
+      fixed = FALSE,
+      prior = "loggamma",
+      param = c(1,0.01)))) +
+  f(distr.unstruct,model="iid",	
+    hyper = list(prec = list(
+      fixed = FALSE,
+      prior = "loggamma",
+      param = c(1,0.01)))) 
+
+
+### Don't run verbose == TRUE as it slows down the re-run...
+
+r  =  inla(formula,data=Zambia, family = "gaussian",
+           control.inla = list(int.strategy = "grid"), 
+           num.threads = 7)
+
+### Generate summary for number of hyperparameters
+summary(r) 
+
+### Extract the grid points from model and store them in "grid.points"
+grid.points = r$joint.hyper
+
+### Dimension of the grid.points object. Note that the first three columns
+### are the actual grid points - the rest is weightings
+dim(grid.points)
+
+### Plot grid points
+x11()
+pairs(grid.points[,c(1:5)])
+
+### Now I need to get the minimum and maximum values from each column of 
+### grid points. This will give us the co-ordinates for the support of LDS points
+
+a.min1 = min(grid.points[,1])
+a.min2 = min(grid.points[,2])
+a.min3 = min(grid.points[,3])
+a.min4 = min(grid.points[,4])
+a.min5 = min(grid.points[,5])
+
+b.max1 = max(grid.points[,1])
+b.max2 = max(grid.points[,2])
+b.max3 = max(grid.points[,3])
+b.max4 = max(grid.points[,4])
+b.max5 = max(grid.points[,5])
+
+low = c(a.min1, a.min2, a.min3, a.min4, a.min5)
+high = c(b.max1, b.max2, b.max3, b.max4, b.max5)
+
+### Generate whatever LDS point set (n points, s dimensions)
+### Note - dimensions = number of hyperparameters
+##### Switch to Korobov Lattice and try
+##### ANy other pointsets that R can generate itself?? 
+
+halt = halton(128, 5)
+
+### Transform LDS from (0,1)^s to (a,b)^s
+### Use trans.pset function below. ALso, assign hp names (in correct order) to each column
+
+trans.pset = function(points, low, high){
+  ## Transform from unit hypercube to hyper-cuboid
+  
+  vec = vector(length=length(low))
+  for (i in 1:length(vec)){
+    vec[i] = high[i]-low[i]
+  }
+  t.pset = array(dim = dim(points))
+  for(j in 1:nrow(points)){
+    for(i in 1:ncol(points)){
+      t.pset[j,i] = vec[i]*points[j,i] + low[i]
+    }}
+  return(t.pset)
+}
+
+trans.halt = trans.pset(halt, low, high)
+colnames(trans.halt)= c(names(r$joint.hyper[c(1:5)]))
+
+pairs(trans.halt, pch=16)
+
+
+### The trans.halt pointset are the new "design points" we put into INLA.
+### In this trans matrix, we also need integration weights - set this to 1 for each point
+
+design.halt = cbind(trans.halt, 1)
+
+
+### Now lets run INLA
+r2 = inla(formula,data=Zambia, family = "gaussian",
+          control.inla = list(int.strategy = "user", int.design = design.halt),
+          num.threads = 7)
+
+
+### Summary stats - any differences?
+
+summary(r)
+summary(r2)
+
+pairs(r2$joint.hyper[,c(1:5)], pch=16)
+
+### Summary stats - any differences?
+
+summary(r)
+summary(r2)
+
+
+
+
+
+
+
+
+
+
+
+
