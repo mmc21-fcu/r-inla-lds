@@ -80,14 +80,14 @@ marglik.ref = inla.evaluate(est.theta, result)$mlik[marglik.estimator] +
      log(abs((2*exp(est.theta[2]))/((exp(est.theta[2])+1)^2))))
 
 #### LDS
-npoints = 512
+npoints = 64
 
-# Generating constant from LatticeBuilder (a = 23)
-korobov.non = shift.koro(npoints, len.theta, 23, FALSE)
-x11(30,30); pairs(korobov.non, pch=16)
+# Generating constant from LatticeBuilder (a = 27)
+korobov.non = shift.koro(npoints, len.theta, 27, FALSE)
+x11(width=30,height=30); pairs(korobov.non, pch=16)
 # vs 19, which seems like the best choice so far
 korobov.non = shift.koro(npoints, len.theta, 19, FALSE)
-x11(30,30); pairs(korobov.non, pch=16)
+x11(width=30,height=30); pairs(korobov.non, pch=16)
 
 # Low and high limits
 low = c(min(theta.inla.hyperpar1[,1]), min(theta.inla.hyperpar2[,1]))
@@ -222,12 +222,12 @@ max.hp.ylim2 = max(c(inla_hyperpar2[,2], lds.part2[,2]))
 ### Approximations - Our quadratic pproximation vs INLA's Dense Grid
 x11(20,10); par(mfrow = c(1,3))
 plot(theta.inla.hyperpar1, type="l", lwd = 2, ylim = c(0,max.theta.ylim1*1.05), cex.lab = 1.25,
-     xlab = "theta_1")
+     xlab = "theta_1_prec")
 lines(theta.lds.part1, type="l", col = "red", lwd = 2)
 abline(v = log(1 / s^2), col="green")
 
 plot(theta.inla.hyperpar2, type="l", lwd = 2, ylim = c(0,max.theta.ylim2*1.05), cex.lab = 1.25,
-     xlab = "theta_2")
+     xlab = "theta_2_rho")
 lines(theta.lds.part2, type="l", col = "red", lwd = 2)
 #abline(v = log((1+0.65)/(1-0.65)), col="green")
 abline(v = rho_z, col="green")

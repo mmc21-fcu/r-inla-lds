@@ -81,3 +81,37 @@ scaledBeta = function(x, a, b, log=FALSE)
   return (if (log) f else exp(f))
 }
 
+### Partitioning functions
+meanBetween = function(vec){
+  meanVec = vector(length = length(vec) - 1)
+  for(i in 1:length(meanVec)){
+    meanVec[i] = 0.5*(vec[i] + vec[i+1])
+  }
+  return(meanVec)
+}
+
+partition = function(mat, support, nPart, position){
+  parts = seq(support[1], support[2], length.out = nPart+1)
+  m.vec = vector(length = nPart)
+  m.pos = vector(length = nPart) 
+  for(i in 1:nPart-1){		###FINDING AVERAGES
+    m.vec[i] = mean(subset(mat[,2], mat[,1] >= parts[i] & mat[,1] < parts[i+1]))
+  }
+  m.vec[nPart] = mean(subset(mat[,2], mat[,1] >= parts[nPart] & mat[,1] <= parts[nPart+1]))
+  ###POSITIONING
+  if(position == 0){
+    m.pos = parts[1:nPart]
+  } else if(position == 1){
+    m.pos = parts[2:(nPart+1)]
+  } else{
+    m.pos = meanBetween(parts)
+  }
+  return(cbind(m.pos, m.vec))
+}
+
+### Vandermonde Matrix
+vandermonde.matrix = function(x.pts, degree){
+  x = x.pts; y = 0:degree
+  v = outer(x,y,"^")
+  return(v)
+}
