@@ -65,3 +65,19 @@ kl.div = function(true.dist,approx.dist)
     return(sum(kld))
   }} 
 
+# For function evaluations using INLA
+inla.evaluate = function(theta, r){
+  ## re-evaluate the model at fixed configuration 'theta'. return the new result.
+  r$.args$control.mode = list(theta = theta, x = r$mode$x, fixed = TRUE)
+  return (do.call("inla", args = r$.args))
+}
+
+### Scaled-Beta [Beta with support (-1,1)] - for prior of rho
+scaledBeta = function(x, a, b, log=FALSE)
+{
+  ## the input 'x' is in the interval (-1, 1)
+  xx = (x + 1)/2
+  f = dbeta(xx, shape1=a, shape=b, log=TRUE) - log(2)
+  return (if (log) f else exp(f))
+}
+
