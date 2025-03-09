@@ -108,17 +108,75 @@ halton.pset = trans.pset(halton.seq, low, high)
 # Matrix that will store the function evaluations and the points 
 eval.results = matrix(NA, npoints, len.theta+1)
 
+######CONVERT THIS TO PROCESS IN PARALLEL
 # Compute function evaluations and store in eval.results
-for (i in 1:npoints){
-  theta.new = korobov[i,]
+system.time({
+  for (i in 1:npoints){
+    theta.new = korobov[i,]
+    result.new = inla.evaluate(theta.new, result)
+    logpost.rel = result.new$mlik[marglik.estimator] - marglik.ref +
+      (dgamma(exp(theta.new[1]), shape = 100, rate = 1, log=TRUE)+ theta.new[1]) +
+      (scaledBeta(((exp(theta.new[2])-1)/(exp(theta.new[2])+1)),5,1,log=TRUE)+
+         log(abs((2*exp(theta.new[2]))/((exp(theta.new[2])+1)^2))))
+    
+    cat(i, "Evaluate theta.new", theta.new,"with relative posterior",logpost.rel,"\n")
+    eval.results[i, ] = c(theta.new, logpost.rel)
+  }
+})
+
+
+comp_function_eval <- function(x_i,i){
+  #return(sum(x_i))
+  theta.new = x_i
   result.new = inla.evaluate(theta.new, result)
   logpost.rel = result.new$mlik[marglik.estimator] - marglik.ref +
     (dgamma(exp(theta.new[1]), shape = 100, rate = 1, log=TRUE)+ theta.new[1]) +
     (scaledBeta(((exp(theta.new[2])-1)/(exp(theta.new[2])+1)),5,1,log=TRUE)+
        log(abs((2*exp(theta.new[2]))/((exp(theta.new[2])+1)^2))))
-  cat(i, "Evaluate theta.new", theta.new,"with relative posterior",logpost.rel,"\n")
-  eval.results[i, ] = c(theta.new, logpost.rel)
+  return(c(theta.new, logpost.rel))
+  # cat(i, "Evaluate theta.new", theta.new,"with relative posterior",logpost.rel,"\n")
+  # return(c(theta.new, logpost.rel))
 }
+
+task_function_eval <- function(x){
+  result.new <- matrix(NA, nrow(x), ncol(x)+1)
+  for(i in 1:nrow(x)){
+    result.new[i,]<- comp_function_eval(x[i,],i)
+  }
+  return(result.new)
+}
+n_dfs <- 3
+rows_per_split <- ceiling(nrow(korobov) / n_dfs)
+split_df_list <- vector("list", n_dfs)
+for (i in 1:n_dfs) {
+  start_row <- (i - 1) * rows_per_split + 1
+  end_row <- min(i * rows_per_split, nrow(korobov))
+  split_df_list[[i]] <- korobov[start_row:end_row, ]
+}
+
+ptset_list <- split_df_list
+
+cl <- makeCluster(16)
+clusterEvalQ(cl, {
+  source("My working/ThesisFunctions.R")
+})
+clusterExport(cl
+              , list("task_function_eval"
+                     ,"ptset_list"
+                     ,"comp_function_eval"
+                     ,"inla.evaluate"
+                     ,"result"
+                     ,"rho_z","marglik.estimator","marglik.ref","scaledBeta"))
+system.time({
+  result_list <- parLapply(cl, ptset_list, task_function_eval)
+})
+
+
+stopCluster(cl)
+
+final_Eval_res <- do.call(rbind, result_list)
+final_Eval_res
+######
 
 # Quadratic Approximation
 # partitions
