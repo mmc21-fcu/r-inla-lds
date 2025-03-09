@@ -23,10 +23,10 @@ formula = y ~ -1 + f(idx, model = "ar1",
                      hyper = list(
                        rho = list(initial = rho_z,
                                   fixed = FALSE,
-                                  pior = "betacorrelation",
+                                  prior = "betacorrelation",
                                   param = c(5,1)),
                        prec = list(initial = 1,
-                                   fixed = TRUE,
+                                   fixed = FALSE,
                                    prior = "loggamma",
                                    param=c(1,1)
                        )
@@ -35,7 +35,7 @@ formula = y ~ -1 + f(idx, model = "ar1",
 result = inla(formula, data = data, family="gaussian",
               control.family = list(hyper = list(
                 prec = list(
-                  fixed = FALSE,
+                  fixed = TRUE,
                   initial = log(1 / s^2),
                   piror = "loggamma",
                   param = c(100,1)
@@ -75,7 +75,7 @@ cov.intern = result$misc$cov.intern # Covariance matrix estimate from inla
 # compute the reference
 marglik.estimator = 2
 marglik.ref = inla.evaluate(est.theta, result)$mlik[marglik.estimator] + 
-  (dgamma(exp(est.theta[1]), shape = 100, rate = 1, log=TRUE)+ est.theta[1]) +
+  (dgamma(exp(est.theta[1]), shape = 1, rate = 1, log=TRUE)+ est.theta[1]) +
   (scaledBeta(((exp(est.theta[2])-1)/(exp(est.theta[2])+1)),5,1,log=TRUE)+
      log(abs((2*exp(est.theta[2]))/((exp(est.theta[2])+1)^2))))
 
@@ -106,23 +106,23 @@ x11(30,30); pairs(halton.seq, pch=16)
 halton.pset = trans.pset(halton.seq, low, high)
 
 # Matrix that will store the function evaluations and the points 
-eval.results = matrix(NA, npoints, len.theta+1)
+#eval.results = matrix(NA, npoints, len.theta+1)
 
 ######CONVERT THIS TO PROCESS IN PARALLEL
 # Compute function evaluations and store in eval.results
-system.time({
-  for (i in 1:npoints){
-    theta.new = korobov[i,]
-    result.new = inla.evaluate(theta.new, result)
-    logpost.rel = result.new$mlik[marglik.estimator] - marglik.ref +
-      (dgamma(exp(theta.new[1]), shape = 100, rate = 1, log=TRUE)+ theta.new[1]) +
-      (scaledBeta(((exp(theta.new[2])-1)/(exp(theta.new[2])+1)),5,1,log=TRUE)+
-         log(abs((2*exp(theta.new[2]))/((exp(theta.new[2])+1)^2))))
-    
-    cat(i, "Evaluate theta.new", theta.new,"with relative posterior",logpost.rel,"\n")
-    eval.results[i, ] = c(theta.new, logpost.rel)
-  }
-})
+# system.time({
+#   for (i in 1:npoints){
+#     theta.new = korobov[i,]
+#     result.new = inla.evaluate(theta.new, result)
+#     logpost.rel = result.new$mlik[marglik.estimator] - marglik.ref +
+#       (dgamma(exp(theta.new[1]), shape = 100, rate = 1, log=TRUE)+ theta.new[1]) +
+#       (scaledBeta(((exp(theta.new[2])-1)/(exp(theta.new[2])+1)),5,1,log=TRUE)+
+#          log(abs((2*exp(theta.new[2]))/((exp(theta.new[2])+1)^2))))
+#     
+#     cat(i, "Evaluate theta.new", theta.new,"with relative posterior",logpost.rel,"\n")
+#     eval.results[i, ] = c(theta.new, logpost.rel)
+#   }
+# })
 
 
 comp_function_eval <- function(x_i,i){
@@ -130,7 +130,7 @@ comp_function_eval <- function(x_i,i){
   theta.new = x_i
   result.new = inla.evaluate(theta.new, result)
   logpost.rel = result.new$mlik[marglik.estimator] - marglik.ref +
-    (dgamma(exp(theta.new[1]), shape = 100, rate = 1, log=TRUE)+ theta.new[1]) +
+    (dgamma(exp(theta.new[1]), shape = 1, rate = 1, log=TRUE)+ theta.new[1]) +
     (scaledBeta(((exp(theta.new[2])-1)/(exp(theta.new[2])+1)),5,1,log=TRUE)+
        log(abs((2*exp(theta.new[2]))/((exp(theta.new[2])+1)^2))))
   return(c(theta.new, logpost.rel))
@@ -185,10 +185,10 @@ position = 2
 poly.degree = 2
 
 # Finding marginals when function evaluations are in log-scale
-psi1 = eval.results[,c(1, len.theta+1)]
+psi1 = final_Eval_res[,c(1, len.theta+1)]
 psi1 = psi1[order(psi1[,1]),]
 x11();plot(psi1)
-psi2 = eval.results[,c(2, len.theta+1)]
+psi2 = final_Eval_res[,c(2, len.theta+1)]
 psi2 = psi2[order(psi2[,1]),]
 x11();plot(psi2)
 
@@ -277,12 +277,12 @@ max.theta.ylim2 = max(c(theta.inla.hyperpar2[,2], theta.lds.part2[,2]))
 max.hp.ylim1 = max(c(inla_hyperpar1[,2], lds.part1[,2]))
 max.hp.ylim2 = max(c(inla_hyperpar2[,2], lds.part2[,2]))
 
-### Approximations - Our quadratic pproximation vs INLA's Dense Grid
+### Approximations - Our quadratic approximation vs INLA's Dense Grid
 x11(20,10); par(mfrow = c(1,3))
 plot(theta.inla.hyperpar1, type="l", lwd = 2, ylim = c(0,max.theta.ylim1*1.05), cex.lab = 1.25,
      xlab = "theta_1_prec")
 lines(theta.lds.part1, type="l", col = "red", lwd = 2)
-abline(v = log(1 / s^2), col="green")
+abline(v = 1, col="green")
 
 plot(theta.inla.hyperpar2, type="l", lwd = 2, ylim = c(0,max.theta.ylim2*1.05), cex.lab = 1.25,
      xlab = "theta_2_rho")
