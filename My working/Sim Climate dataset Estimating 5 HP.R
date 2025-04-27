@@ -1,5 +1,3 @@
-# Load INLA package
-library(INLA)
 
 # -------------------------------
 # Simulate example climate dataset
@@ -99,5 +97,3 @@ result <- inla(
 # 7. Explore the Results
 # -------------------------------
 summary(result)
-
-
